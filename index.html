@@ -303,15 +303,7 @@ hr.divider {
 .badge-clean  { background: rgba(52,180,100,0.2);  color: #52c878; }
 .badge-attack { background: rgba(192,57,43,0.25); color: #e8705f; }
 
-/* episode number chip */
-.ep-chip {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px; border-radius: 50%;
-  background: rgba(200,136,42,0.18);
-  font-size: 0.7rem; font-weight: 700; color: var(--amber2);
-  position: absolute; top: 0.5rem; left: 0.6rem; z-index: 4;
-  border: 1px solid rgba(200,136,42,0.35);
-}
+
 
 /* ── RESULTS TABLE ── */
 .table-scroll { overflow-x: auto; border-radius: 6px; border: 1px solid var(--border); margin-top: 1.6rem; }
@@ -481,174 +473,21 @@ footer .footer-title {
 <hr class="divider">
 
 <!-- ══════════════════════════════════════════
-     DEMO — LIBERO-Object clean episodes
+     DEMO — LIBERO-Object adversarial episodes
 ═══════════════════════════════════════════ -->
 <section class="sec" id="demo">
   <div class="sec-rule reveal"><span>Simulation Demo</span></div>
-  <h2 class="reveal">LIBERO-Object: clean robot trajectories</h2>
+  <h2 class="reveal">LIBERO-Object: adversarial attack demonstrations</h2>
   <p class="sec-body reveal" style="margin-bottom:2rem;">
-    Below are clean (unattacked) episodes from the <em>LIBERO-Object</em> task suite, evaluated with the <strong>OpenVLA-OFT</strong> model. Each clip shows a successful pick-and-place manipulation. After TexTrojan adversarial textures are applied, the robot fails these tasks at up to <strong>85.5%</strong> failure rate.
+    Each clip shows a robot failing a pick-and-place task under <strong>TexTrojan</strong> adversarial 3D textures. The adversarial texture is applied directly to the manipulated object, causing the robot to fail without any modification to the environment or task instructions.
   </p>
 
   <div class="video-grid reveal" id="videoGrid">
 
-    <!-- Episode 1 — alphabet soup -->
+    <!-- chocolate pudding -->
     <div class="video-panel">
       <div class="video-inner" onclick="toggleVideo(this)">
-        <span class="ep-chip">1</span>
-        <video src="video/2026_03_29-15_28_17--openvla_oft--episode=1--success=True--task=pick_up_the_alphabet_soup_and_place_it_in_the_bask.mp4"
-               loop muted playsinline preload="metadata"></video>
-        <div class="video-overlay">
-          <div class="video-play-btn">▶</div>
-        </div>
-      </div>
-      <div class="video-label">
-        <div>
-          <div class="video-label-name">Pick up the alphabet soup</div>
-          <div class="video-label-task">and place it in the basket</div>
-        </div>
-        <span class="video-label-badge badge-clean">Clean</span>
-      </div>
-    </div>
-
-    <!-- Episode 2 — cream cheese -->
-    <div class="video-panel">
-      <div class="video-inner" onclick="toggleVideo(this)">
-        <span class="ep-chip">2</span>
-        <video src="video/2026_03_29-15_28_17--openvla_oft--episode=2--success=True--task=pick_up_the_cream_cheese_and_place_it_in_the_baske.mp4"
-               loop muted playsinline preload="metadata"></video>
-        <div class="video-overlay">
-          <div class="video-play-btn">▶</div>
-        </div>
-      </div>
-      <div class="video-label">
-        <div>
-          <div class="video-label-name">Pick up the cream cheese</div>
-          <div class="video-label-task">and place it in the basket</div>
-        </div>
-        <span class="video-label-badge badge-clean">Clean</span>
-      </div>
-    </div>
-
-    <!-- Episode 3 — salad dressing -->
-    <div class="video-panel">
-      <div class="video-inner" onclick="toggleVideo(this)">
-        <span class="ep-chip">3</span>
-        <video src="video/2026_03_29-15_45_31--openvla-oft--episode=3--success=True--task=pick_up_the_salad_dressing_and_place_it_in_the_bas.mp4"
-               loop muted playsinline preload="metadata"></video>
-        <div class="video-overlay">
-          <div class="video-play-btn">▶</div>
-        </div>
-      </div>
-      <div class="video-label">
-        <div>
-          <div class="video-label-name">Pick up the salad dressing</div>
-          <div class="video-label-task">and place it in the basket</div>
-        </div>
-        <span class="video-label-badge badge-clean">Clean</span>
-      </div>
-    </div>
-
-    <!-- Episode 4 — bbq sauce -->
-    <div class="video-panel">
-      <div class="video-inner" onclick="toggleVideo(this)">
-        <span class="ep-chip">4</span>
-        <video src="video/2026_03_29-15_45_31--openvla-oft--episode=4--success=True--task=pick_up_the_bbq_sauce_and_place_it_in_the_basket.mp4"
-               loop muted playsinline preload="metadata"></video>
-        <div class="video-overlay">
-          <div class="video-play-btn">▶</div>
-        </div>
-      </div>
-      <div class="video-label">
-        <div>
-          <div class="video-label-name">Pick up the BBQ sauce</div>
-          <div class="video-label-task">and place it in the basket</div>
-        </div>
-        <span class="video-label-badge badge-clean">Clean</span>
-      </div>
-    </div>
-
-    <!-- Episode 5 — ketchup -->
-    <div class="video-panel">
-      <div class="video-inner" onclick="toggleVideo(this)">
-        <span class="ep-chip">5</span>
-        <video src="video/2026_03_29-15_45_31--openvla-oft--episode=5--success=True--task=pick_up_the_ketchup_and_place_it_in_the_basket.mp4"
-               loop muted playsinline preload="metadata"></video>
-        <div class="video-overlay">
-          <div class="video-play-btn">▶</div>
-        </div>
-      </div>
-      <div class="video-label">
-        <div>
-          <div class="video-label-name">Pick up the ketchup</div>
-          <div class="video-label-task">and place it in the basket</div>
-        </div>
-        <span class="video-label-badge badge-clean">Clean</span>
-      </div>
-    </div>
-
-    <!-- Episode 6 — tomato sauce -->
-    <div class="video-panel">
-      <div class="video-inner" onclick="toggleVideo(this)">
-        <span class="ep-chip">6</span>
-        <video src="video/2026_03_29-15_45_31--openvla-oft--episode=6--success=True--task=pick_up_the_tomato_sauce_and_place_it_in_the_baske.mp4"
-               loop muted playsinline preload="metadata"></video>
-        <div class="video-overlay">
-          <div class="video-play-btn">▶</div>
-        </div>
-      </div>
-      <div class="video-label">
-        <div>
-          <div class="video-label-name">Pick up the tomato sauce</div>
-          <div class="video-label-task">and place it in the basket</div>
-        </div>
-        <span class="video-label-badge badge-clean">Clean</span>
-      </div>
-    </div>
-
-    <!-- Episode 7 — butter -->
-    <div class="video-panel">
-      <div class="video-inner" onclick="toggleVideo(this)">
-        <span class="ep-chip">7</span>
-        <video src="video/2026_03_29-15_45_31--openvla-oft--episode=7--success=True--task=pick_up_the_butter_and_place_it_in_the_basket.mp4"
-               loop muted playsinline preload="metadata"></video>
-        <div class="video-overlay">
-          <div class="video-play-btn">▶</div>
-        </div>
-      </div>
-      <div class="video-label">
-        <div>
-          <div class="video-label-name">Pick up the butter</div>
-          <div class="video-label-task">and place it in the basket</div>
-        </div>
-        <span class="video-label-badge badge-clean">Clean</span>
-      </div>
-    </div>
-
-    <!-- Episode 8 — milk -->
-    <div class="video-panel">
-      <div class="video-inner" onclick="toggleVideo(this)">
-        <span class="ep-chip">8</span>
-        <video src="video/2026_03_29-15_45_31--openvla-oft--episode=8--success=True--task=pick_up_the_milk_and_place_it_in_the_basket.mp4"
-               loop muted playsinline preload="metadata"></video>
-        <div class="video-overlay">
-          <div class="video-play-btn">▶</div>
-        </div>
-      </div>
-      <div class="video-label">
-        <div>
-          <div class="video-label-name">Pick up the milk</div>
-          <div class="video-label-task">and place it in the basket</div>
-        </div>
-        <span class="video-label-badge badge-clean">Clean</span>
-      </div>
-    </div>
-
-    <!-- Episode 9 — chocolate pudding -->
-    <div class="video-panel">
-      <div class="video-inner" onclick="toggleVideo(this)">
-        <span class="ep-chip">9</span>
-        <video src="video/2026_03_29-15_45_31--openvla-oft--episode=9--success=True--task=pick_up_the_chocolate_pudding_and_place_it_in_the_.mp4"
+        <video src="video/object/adv/2026_03_21-10_45_05--episode=1--success=False--task=pick_up_the_chocolate_pudding_and_place_it_in_the_.mp4"
                loop muted playsinline preload="metadata"></video>
         <div class="video-overlay">
           <div class="video-play-btn">▶</div>
@@ -659,15 +498,68 @@ footer .footer-title {
           <div class="video-label-name">Pick up the chocolate pudding</div>
           <div class="video-label-task">and place it in the basket</div>
         </div>
-        <span class="video-label-badge badge-clean">Clean</span>
+        <span class="video-label-badge badge-attack">TexTrojan</span>
       </div>
     </div>
 
-    <!-- Episode 10 — orange juice -->
+    <!-- milk -->
     <div class="video-panel">
       <div class="video-inner" onclick="toggleVideo(this)">
-        <span class="ep-chip">10</span>
-        <video src="video/2026_03_29-15_45_31--openvla-oft--episode=10--success=True--task=pick_up_the_orange_juice_and_place_it_in_the_baske.mp4"
+        <video src="video/object/adv/2026_03_21-10_45_40--episode=1--success=False--task=pick_up_the_milk_and_place_it_in_the_basket.mp4"
+               loop muted playsinline preload="metadata"></video>
+        <div class="video-overlay">
+          <div class="video-play-btn">▶</div>
+        </div>
+      </div>
+      <div class="video-label">
+        <div>
+          <div class="video-label-name">Pick up the milk</div>
+          <div class="video-label-task">and place it in the basket</div>
+        </div>
+        <span class="video-label-badge badge-attack">TexTrojan</span>
+      </div>
+    </div>
+
+    <!-- tomato sauce -->
+    <div class="video-panel">
+      <div class="video-inner" onclick="toggleVideo(this)">
+        <video src="video/object/adv/2026_03_21-10_46_10--episode=1--success=False--task=pick_up_the_tomato_sauce_and_place_it_in_the_baske.mp4"
+               loop muted playsinline preload="metadata"></video>
+        <div class="video-overlay">
+          <div class="video-play-btn">▶</div>
+        </div>
+      </div>
+      <div class="video-label">
+        <div>
+          <div class="video-label-name">Pick up the tomato sauce</div>
+          <div class="video-label-task">and place it in the basket</div>
+        </div>
+        <span class="video-label-badge badge-attack">TexTrojan</span>
+      </div>
+    </div>
+
+    <!-- cream cheese -->
+    <div class="video-panel">
+      <div class="video-inner" onclick="toggleVideo(this)">
+        <video src="video/object/adv/2026_03_21-10_46_39--episode=1--success=False--task=pick_up_the_cream_cheese_and_place_it_in_the_baske.mp4"
+               loop muted playsinline preload="metadata"></video>
+        <div class="video-overlay">
+          <div class="video-play-btn">▶</div>
+        </div>
+      </div>
+      <div class="video-label">
+        <div>
+          <div class="video-label-name">Pick up the cream cheese</div>
+          <div class="video-label-task">and place it in the basket</div>
+        </div>
+        <span class="video-label-badge badge-attack">TexTrojan</span>
+      </div>
+    </div>
+
+    <!-- orange juice -->
+    <div class="video-panel">
+      <div class="video-inner" onclick="toggleVideo(this)">
+        <video src="video/object/adv/2026_03_21-11_03_05--episode=1--success=False--task=pick_up_the_orange_juice_and_place_it_in_the_baske.mp4"
                loop muted playsinline preload="metadata"></video>
         <div class="video-overlay">
           <div class="video-play-btn">▶</div>
@@ -678,7 +570,25 @@ footer .footer-title {
           <div class="video-label-name">Pick up the orange juice</div>
           <div class="video-label-task">and place it in the basket</div>
         </div>
-        <span class="video-label-badge badge-clean">Clean</span>
+        <span class="video-label-badge badge-attack">TexTrojan</span>
+      </div>
+    </div>
+
+    <!-- butter -->
+    <div class="video-panel">
+      <div class="video-inner" onclick="toggleVideo(this)">
+        <video src="video/object/adv/2026_03_21-11_08_15--episode=1--success=False--task=pick_up_the_butter_and_place_it_in_the_basket.mp4"
+               loop muted playsinline preload="metadata"></video>
+        <div class="video-overlay">
+          <div class="video-play-btn">▶</div>
+        </div>
+      </div>
+      <div class="video-label">
+        <div>
+          <div class="video-label-name">Pick up the butter</div>
+          <div class="video-label-task">and place it in the basket</div>
+        </div>
+        <span class="video-label-badge badge-attack">TexTrojan</span>
       </div>
     </div>
 
@@ -837,10 +747,10 @@ footer .footer-title {
   <p class="footer-title">TexTrojan</p>
   <p>Objects as Attack Surfaces via Adversarial 3D Textures for Vision-Language-Action Models</p>
   <br>
-  <p>Questions? <a href="mailto:contact@example.com">contact@example.com</a> &nbsp;·&nbsp; <a href="#">GitHub</a> &nbsp;·&nbsp; <a href="#">arXiv</a></p>
+  <p>Questions? <a href="/cdn-cgi/l/email-protection#d6b5b9b8a2b7b5a296b3aeb7bba6bab3f8b5b9bb"><span class="__cf_email__" data-cfemail="05666a6b7164667145607d64687569602b666a68">[email&#160;protected]</span></a> &nbsp;·&nbsp; <a href="#">GitHub</a> &nbsp;·&nbsp; <a href="#">arXiv</a></p>
 </footer>
 
-<script>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 // ── Scroll reveal ──
 const obs = new IntersectionObserver(entries => {
   entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('in'); });
@@ -871,10 +781,4 @@ function toggleVideo(inner) {
 }
 
 // Re-show overlay when video ends (loop restarts — just in case)
-document.querySelectorAll('.video-inner video').forEach(vid => {
-  vid.addEventListener('pause', () => vid.closest('.video-inner').classList.remove('playing'));
-  vid.addEventListener('play',  () => vid.closest('.video-inner').classList.add('playing'));
-});
-</script>
-</body>
-</html>
+document.querySelectorAll('.video-inner v
