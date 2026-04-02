@@ -5,6 +5,8 @@ import ctypes
 import traceback
 import time
 import json
+import math
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Union, List
@@ -25,6 +27,7 @@ import wandb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from omegaconf import OmegaConf
 
 print("[INFO] Setting up OSMesa for CPU Rendering...")
 os.environ['MUJOCO_GL'] = 'osmesa'
@@ -55,6 +58,7 @@ from robot_utils import (
     DATE_TIME, get_action, get_image_resize_size, get_model,
     invert_gripper_action, normalize_gripper_action, set_seed_everywhere,
 )
+
 
 def _scanned(name, mesh_file=None, tex_file="texture.png"):
     base = f"{ASSET_ROOT_SCANNED}/{name}"
@@ -143,8 +147,8 @@ OBJECTS = {
     },
 }
 
+
 def parse_mesh_scale(xml_path: str) -> List[float]:
-    """从 XML 中读取 mesh scale，返回 [sx, sy, sz]。"""
     tree = ET.parse(xml_path)
     root = tree.getroot()
     for mesh_elem in root.findall(".//mesh"):
@@ -153,6 +157,7 @@ def parse_mesh_scale(xml_path: str) -> List[float]:
             vals = [float(v) for v in scale_str.strip().split()]
             return vals if len(vals) == 3 else [vals[0]] * 3
     return [1.0, 1.0, 1.0]
+
 
 class DifferentiableRenderer(nn.Module):
     def __init__(self, mesh_path, orig_texture_path=None, device="cuda",
@@ -180,7 +185,6 @@ class DifferentiableRenderer(nn.Module):
         self.register_buffer("pos",   torch.from_numpy(vertices.astype(np.float32)).to(device))
         self.register_buffer("faces", torch.from_numpy(mesh.faces.astype(np.int32)).to(device))
 
-        # UV
         if hasattr(mesh.visual, "uv") and mesh.visual.uv is not None and len(mesh.visual.uv) > 0:
             uv = mesh.visual.uv.astype(np.float32)
             self.register_buffer("uv", torch.from_numpy(uv).to(device))
@@ -202,7 +206,6 @@ class DifferentiableRenderer(nn.Module):
             self.register_buffer("uv",     uv.float())
             self.register_buffer("uv_idx", self.faces)
 
-        # 顶点法线
         if not hasattr(mesh, "vertex_normals") or mesh.vertex_normals is None:
             mesh.fix_normals()
         vn = np.array(getattr(mesh, "vertex_normals", np.zeros_like(vertices)))
@@ -213,7 +216,6 @@ class DifferentiableRenderer(nn.Module):
 
         self.glctx = dr.RasterizeCudaContext()
 
-        # 原始纹理（带 FLIP_TOP_BOTTOM 以对齐 nvdiffrast UV 坐标系）
         if orig_texture_path and os.path.exists(orig_texture_path):
             img = (Image.open(orig_texture_path).convert("RGB")
                         .resize((self.texture_res, self.texture_res))
@@ -235,7 +237,6 @@ class DifferentiableRenderer(nn.Module):
             torch.tensor([0.5, 0.5, 1.0], device=device), dim=0
         )
 
-    # -------------------------------------------------------------- #
     def get_texture_param(self):
         return self.adv_vc_noise
 
@@ -243,7 +244,6 @@ class DifferentiableRenderer(nn.Module):
         with torch.no_grad():
             self.adv_vc_noise.data.fill_(0.0)
 
-    # -------------------------------------------------------------- #
     def render(self, mvp, resolution=(256, 256), return_clean=False):
         pos      = self.pos + self.pos_offset
         pos_homo = torch.cat([pos, torch.ones_like(pos[..., :1])], dim=-1)
@@ -272,9 +272,7 @@ class DifferentiableRenderer(nn.Module):
             return adv_color * lighting, clean_color * lighting, mask
         return adv_color * lighting, mask
 
-    # -------------------------------------------------------------- #
     def get_baked_adv_texture(self):
-        """将顶点噪声烘焙回 UV 贴图（导出给 MuJoCo 前翻转回原始方向）。"""
         with torch.no_grad():
             uv_clip = self.uv * 2.0 - 1.0
             uv4     = torch.cat([uv_clip,
@@ -288,10 +286,9 @@ class DifferentiableRenderer(nn.Module):
             result  = torch.clamp(self.orig_texture + baked * mask, 0.0, 1.0)
             return torch.flip(result, dims=[1])
 
-    # -------------------------------------------------------------- #
     def bake_vertex_colors_to_texture(self, resolution=(256, 256)):
-        """兼容旧接口（与 get_baked_adv_texture 等价）。"""
         return self.get_baked_adv_texture()
+
 
 def get_obj_name(mod, idx, obj_type):
     short_type_map = {
@@ -384,23 +381,129 @@ def get_render_mvp_from_matrix(env, model_matrix, resolution=(256, 256)):
 
 
 def render_and_composite(renderer, bg_tensor, mvp, resolution=(256, 256)):
-    """将对抗渲染结果合成到背景上，返回 [1, 3, H, W]。"""
     if mvp is None:
         return bg_tensor
-
     adv_rgba, mask = renderer.render(mvp, resolution=resolution)
     adv_rgb  = adv_rgba.permute(0, 3, 1, 2)
     mask_t   = mask.permute(0, 3, 1, 2)
     return torch.clamp(adv_rgb * mask_t + bg_tensor * (1 - mask_t), 0.0, 1.0)
 
 
+def load_latent_encoder(config_path: str, ckpt_path: str, device):
+    for taming_root in [Path("./taming-transformers"), Path("./taming-transformers-master")]:
+        if taming_root.exists():
+            s = str(taming_root.resolve())
+            if s not in sys.path:
+                sys.path.insert(0, s)
+            break
+
+    from taming.models.vqgan import VQModel
+
+    cfg = OmegaConf.load(config_path)
+    model_cfg = cfg.model.params if "model" in cfg and "params" in cfg.model else cfg.model
+    latent_model = VQModel(**model_cfg)
+
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    state_dict = ckpt["state_dict"] if isinstance(ckpt, dict) and "state_dict" in ckpt else ckpt
+    latent_model.load_state_dict(state_dict, strict=False)
+    latent_model.eval().to(device)
+    for p in latent_model.parameters():
+        p.requires_grad = False
+    return latent_model.encoder
+
+
+def extract_latent(encoder, img_np: np.ndarray, device) -> torch.Tensor:
+    img = Image.fromarray(img_np).resize((256, 256))
+    x = torch.from_numpy(np.asarray(img).astype(np.float32) / 255.0).to(device)
+    x = x.permute(2, 0, 1).unsqueeze(0) * 2.0 - 1.0
+    with torch.no_grad():
+        feat = encoder(x).mean(dim=[2, 3]).squeeze(0)
+    return feat.detach()
+
+
+def compute_frame_weights(latent_features: List[torch.Tensor], tau: float) -> torch.Tensor:
+    if len(latent_features) == 0:
+        return torch.tensor([], dtype=torch.float32)
+    if len(latent_features) == 1:
+        return torch.ones(1, dtype=torch.float32)
+
+    feats  = [f.detach().float() for f in latent_features]
+    device = feats[0].device
+    n      = len(feats)
+
+    v = torch.zeros(n, device=device)
+    a = torch.zeros(n, device=device)
+    for t in range(1, n):
+        v[t] = torch.norm(feats[t] - feats[t - 1], p=2) / 2.0
+    for t in range(1, n):
+        a[t] = torch.abs(v[t] - v[t - 1])
+
+    def _minmax(x):
+        return (x - x.min()) / torch.clamp(x.max() - x.min(), min=1e-8)
+
+    s = torch.maximum(_minmax(v), _minmax(a))
+    w = torch.softmax(s / float(max(tau, 1e-6)), dim=0)
+    return w.detach()
+
+
+def _gaussian_kernel2d(kernel_size: int, sigma: float, device, dtype):
+    radius = kernel_size // 2
+    x = torch.arange(-radius, radius + 1, device=device, dtype=dtype)
+    g = torch.exp(-0.5 * (x / sigma) ** 2)
+    g = g / g.sum()
+    k2d = torch.outer(g, g)
+    return k2d / k2d.sum()
+
+
+def apply_eot_2d(img_tensor: torch.Tensor) -> torch.Tensor:
+    device, dtype = img_tensor.device, img_tensor.dtype
+    b = random.uniform(-0.2, 0.2)
+    c = random.uniform(0.8, 1.2)
+    m = img_tensor.mean(dim=(2, 3), keepdim=True)
+    y = (img_tensor - m) * c + m + b
+    k     = random.choice([3, 5])
+    sigma = random.uniform(0.5, 1.5)
+    kern  = _gaussian_kernel2d(k, sigma, device=device, dtype=dtype)
+    kern  = kern.view(1, 1, k, k).repeat(3, 1, 1, 1)
+    y = F.conv2d(y, kern, padding=k // 2, groups=3)
+    return torch.clamp(y, 0.0, 1.0)
+
+
+def perturb_mvp(
+    mvp: torch.Tensor,
+    rot_std_deg: float = 5.0,
+    trans_std: float   = 0.02,
+    scale_range: tuple = (0.9, 1.1),
+) -> torch.Tensor:
+    device, dtype = mvp.device, mvp.dtype
+    angles = torch.randn(3, device=device, dtype=dtype) * math.radians(rot_std_deg)
+    cx, cy, cz = torch.cos(angles[0]), torch.cos(angles[1]), torch.cos(angles[2])
+    sx, sy, sz = torch.sin(angles[0]), torch.sin(angles[1]), torch.sin(angles[2])
+
+    Rx = torch.eye(4, device=device, dtype=dtype)
+    Rx[1, 1] = cx;  Rx[1, 2] = -sx
+    Rx[2, 1] = sx;  Rx[2, 2] =  cx
+
+    Ry = torch.eye(4, device=device, dtype=dtype)
+    Ry[0, 0] = cy;  Ry[0, 2] =  sy
+    Ry[2, 0] = -sy; Ry[2, 2] =  cy
+
+    Rz = torch.eye(4, device=device, dtype=dtype)
+    Rz[0, 0] = cz;  Rz[0, 1] = -sz
+    Rz[1, 0] = sz;  Rz[1, 1] =  cz
+
+    T = torch.eye(4, device=device, dtype=dtype)
+    T[:3, 3] = torch.randn(3, device=device, dtype=dtype) * trans_std
+
+    scale = random.uniform(*scale_range)
+    S = torch.eye(4, device=device, dtype=dtype)
+    S[0, 0] = S[1, 1] = S[2, 2] = scale
+
+    return mvp @ Rz @ Ry @ Rx @ T @ S
+
+
 def get_attack_loss(logits, clean_labels):
-    """
-    Targeted attack loss：将预测推向与正确 bin 对立的方向。
-    训练时：minimize CE(predicted, correct_bin)
-    攻击时：minimize CE(predicted, opposite_bin)，使动作方向完全反转。
-    """
-    ACTION_START = 31744  # Llama 词表末尾 256 个 action token 的起始
+    ACTION_START = 31744
     ACTION_END   = 32000
     NUM_BINS     = 256
 
@@ -418,11 +521,11 @@ def get_attack_loss(logits, clean_labels):
     if not action_mask.any():
         return torch.tensor(0.0, device=logits.device, requires_grad=True)
 
-    valid_logits   = shift_logits[action_mask]
-    valid_labels   = shift_labels[action_mask]
-    action_logits  = valid_logits[:, ACTION_START:ACTION_END]
-    correct_bins   = valid_labels - ACTION_START
-    opposite_bins  = (NUM_BINS - 1 - correct_bins)
+    valid_logits  = shift_logits[action_mask]
+    valid_labels  = shift_labels[action_mask]
+    action_logits = valid_logits[:, ACTION_START:ACTION_END]
+    correct_bins  = valid_labels - ACTION_START
+    opposite_bins = (NUM_BINS - 1 - correct_bins)
 
     return F.cross_entropy(action_logits, opposite_bins)
 
@@ -447,15 +550,63 @@ def get_uada_loss_and_metric(logits, labels):
                      if valid_logits.shape[-1] <= ACTION_END
                      else valid_logits[:, ACTION_START:ACTION_END])
 
-    probs        = F.softmax(action_logits, dim=-1)
-    reweigh      = torch.arange(1, NUM_BINS + 1, device=logits.device) / float(NUM_BINS)
-    pred_values  = (probs * reweigh).sum(dim=-1)
+    probs       = F.softmax(action_logits, dim=-1)
+    reweigh     = torch.arange(1, NUM_BINS + 1, device=logits.device) / float(NUM_BINS)
+    pred_values = (probs * reweigh).sum(dim=-1)
 
     target_values = torch.zeros_like(pred_values)
     target_values[valid_labels >  (ACTION_START + NUM_BINS / 2)] = 1.0 / NUM_BINS
     target_values[valid_labels <= (ACTION_START + NUM_BINS / 2)] = 1.0
 
     return F.mse_loss(pred_values, target_values), 0.0
+
+
+def _build_adv_samples(
+    cfg, renderer, fdata, RENDER_RES: int
+) -> List[torch.Tensor]:
+    """
+    根据 cfg.use_eot / cfg.eot_mode 构造 adv 图像列表。
+    返回 List of [1,3,H,W]，每个元素保持梯度。
+    eot_mode:
+        "none"  — 不做 EoT，返回单张标准渲染图
+        "2d"    — 只做 2D 图像增强（brightness/contrast/blur）
+        "3d"    — 只做 3D MVP 扰动（视角/平移/缩放）
+        "both"  — 3D 扰动 + 2D 增强
+    """
+    if not cfg.use_eot:
+        adv_rgba, mask = renderer.render(fdata["mvp"], resolution=(RENDER_RES, RENDER_RES))
+        adv = torch.clamp(
+            adv_rgba.permute(0, 3, 1, 2) * mask.permute(0, 3, 1, 2)
+            + fdata["bg_tensor"] * (1 - mask.permute(0, 3, 1, 2)),
+            0.0, 1.0,
+        )
+        return [adv]
+
+    samples = []
+    for _ in range(cfg.eot_num_samples):
+        if cfg.eot_mode in ("3d", "both"):
+            mvp_use = perturb_mvp(
+                fdata["mvp"],
+                rot_std_deg=cfg.eot_rot_std_deg,
+                trans_std=cfg.eot_trans_std,
+                scale_range=(cfg.eot_scale_min, cfg.eot_scale_max),
+            )
+        else:
+            mvp_use = fdata["mvp"]
+
+        adv_rgba, mask = renderer.render(mvp_use, resolution=(RENDER_RES, RENDER_RES))
+        adv = torch.clamp(
+            adv_rgba.permute(0, 3, 1, 2) * mask.permute(0, 3, 1, 2)
+            + fdata["bg_tensor"] * (1 - mask.permute(0, 3, 1, 2)),
+            0.0, 1.0,
+        )
+
+        if cfg.eot_mode in ("2d", "both"):
+            adv = apply_eot_2d(adv)
+
+        samples.append(adv)
+
+    return samples
 
 
 def train_adversarial_texture(
@@ -465,27 +616,31 @@ def train_adversarial_texture(
     search_keywords_list: List[List[str]],
     num_iters=20,
 ):
-    print(f"[ATTACK] Training Ep {episode_idx} | Joint Action & Feature Loss "
-          f"({cfg.num_frames_to_attack}-Frame Averaged Optimization)...")
+    print(f"[ATTACK] Training Ep {episode_idx} | TAAO + EoT({cfg.eot_mode}) "
+          f"| {cfg.num_frames_to_attack}-Frame Optimization...")
     os.makedirs(save_dir, exist_ok=True)
 
     RENDER_RES       = 256
     model_input_size = get_image_resize_size(cfg)
+    device           = model.device
 
     env, _ = get_libero_env(task, cfg.model_family, resolution=RENDER_RES)
     env.reset()
     obs = env.set_init_state(initial_obs_state)
     env.env.sim.forward()
 
-    siglip_mean = torch.tensor([0.5,   0.5,   0.5  ], device=model.device).view(1, 3, 1, 1)
-    siglip_std  = torch.tensor([0.5,   0.5,   0.5  ], device=model.device).view(1, 3, 1, 1)
-    dino_mean   = torch.tensor([0.485, 0.456, 0.406], device=model.device).view(1, 3, 1, 1)
-    dino_std    = torch.tensor([0.229, 0.224, 0.225], device=model.device).view(1, 3, 1, 1)
+    siglip_mean = torch.tensor([0.5,   0.5,   0.5  ], device=device).view(1, 3, 1, 1)
+    siglip_std  = torch.tensor([0.5,   0.5,   0.5  ], device=device).view(1, 3, 1, 1)
+    dino_mean   = torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1)
+    dino_std    = torch.tensor([0.229, 0.224, 0.225], device=device).view(1, 3, 1, 1)
 
-    # ---- 阶段 1：收集多帧环境状态、clean action token、clean hidden states ---- #
+    latent_encoder = load_latent_encoder(
+        cfg.latent_encoder_config, cfg.latent_encoder_ckpt, device
+    )
+
     num_frames = cfg.num_frames_to_attack
     frame_data = []
-    print(f"[INFO] Collecting {num_frames} frames for averaged optimization...")
+    print(f"[INFO] Collecting {num_frames} frames...")
 
     for t in range(num_frames):
         img_np = get_libero_image(obs, RENDER_RES)
@@ -494,8 +649,8 @@ def train_adversarial_texture(
                 os.path.join(save_dir, f"Ep{episode_idx}_Original_F0.png")
             )
 
-        bg_tensor = (torch.from_numpy(img_np).float().to(model.device) / 255.0
-                     ).permute(2, 0, 1).unsqueeze(0)  # [1, 3, H, W]
+        bg_tensor = (torch.from_numpy(img_np).float().to(device) / 255.0
+                     ).permute(2, 0, 1).unsqueeze(0)
 
         model_matrix, body_id, found_name = get_target_model_matrix(env, search_keywords_list)
         mvp = (get_render_mvp_from_matrix(env, model_matrix, resolution=(RENDER_RES, RENDER_RES))
@@ -503,13 +658,11 @@ def train_adversarial_texture(
         if body_id != -1:
             print(f"  [帧 {t}] 找到目标 body: '{found_name}'")
         else:
-            print(f"  [帧 {t}] 未找到目标 body，跳过该帧渲染")
+            print(f"  [帧 {t}] 未找到目标 body")
 
-        # clean action token 预测
-        image_pil   = Image.fromarray(img_np).resize((model_input_size, model_input_size))
-        prompt      = (f"In: What action should the robot take to "
-                       f"{task_description.lower()}?\nOut:")
-        clean_inputs = processor(prompt, images=image_pil).to(model.device)
+        image_pil    = Image.fromarray(img_np).resize((model_input_size, model_input_size))
+        prompt       = f"In: What action should the robot take to {task_description.lower()}?\nOut:"
+        clean_inputs = processor(prompt, images=image_pil).to(device)
         if "pixel_values" in clean_inputs:
             clean_inputs["pixel_values"] = clean_inputs["pixel_values"].to(torch.bfloat16)
 
@@ -520,7 +673,6 @@ def train_adversarial_texture(
                     do_sample=False,
                     pad_token_id=processor.tokenizer.pad_token_id,
                 )
-                # clean hidden states（最后一层）
                 clean_224 = F.interpolate(bg_tensor, size=(model_input_size, model_input_size),
                                            mode="bilinear", align_corners=False)
                 clean_pv  = torch.cat(
@@ -534,17 +686,28 @@ def train_adversarial_texture(
                     output_hidden_states=True,
                 )
                 clean_hidden = clean_fwd.hidden_states[-1].detach()
+            latent_feat = extract_latent(latent_encoder, img_np, device)
 
         frame_data.append({
             "bg_tensor":        bg_tensor,
             "mvp":              mvp,
             "clean_output_ids": clean_output_ids,
             "clean_hidden":     clean_hidden,
+            "latent_feat":      latent_feat,
+            "siglip_mean":      siglip_mean,
+            "siglip_std":       siglip_std,
+            "dino_mean":        dino_mean,
+            "dino_std":         dino_std,
+            "model_input_size": model_input_size,
         })
 
         obs, _, _, _ = env.step(get_libero_dummy_action(cfg.model_family))
 
-    # ---- 阶段 2：联合 Loss 优化循环 ---- #
+    frame_weights = compute_frame_weights(
+        [f["latent_feat"] for f in frame_data], tau=cfg.tau
+    )
+    print(f"[ATTACK] 关键帧权重: {frame_weights.cpu().numpy().round(4).tolist()}")
+
     optimizer = torch.optim.Adam([renderer.get_texture_param()], lr=cfg.attack_lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=num_iters, eta_min=cfg.attack_lr * 0.1
@@ -561,48 +724,49 @@ def train_adversarial_texture(
         avg_total = avg_action = avg_feat = 0.0
         valid = 0
 
-        for fdata in frame_data:
+        for t, fdata in enumerate(frame_data):
             if fdata["mvp"] is None:
                 continue
 
-            bg      = fdata["bg_tensor"]
-            mvp     = fdata["mvp"]
-            ids     = fdata["clean_output_ids"]
-            c_hid   = fdata["clean_hidden"]
+            w_t = frame_weights[t].to(device)
 
-            # 可微渲染 + 合成
-            adv_rgba, mask = renderer.render(mvp, resolution=(RENDER_RES, RENDER_RES))
-            adv_rgb  = adv_rgba.permute(0, 3, 1, 2)
-            mask_t   = mask.permute(0, 3, 1, 2)
-            adv_diff = torch.clamp(adv_rgb * mask_t + bg * (1 - mask_t), 0.0, 1.0)
+            adv_samples = _build_adv_samples(cfg, renderer, fdata, RENDER_RES)
 
             if i == 0 and valid == 0 and cfg.save_attack_artifacts:
                 Image.fromarray(
-                    (adv_diff.squeeze().permute(1, 2, 0).detach().cpu().numpy() * 255
+                    (adv_samples[0].squeeze().permute(1, 2, 0).detach().cpu().numpy() * 255
                      ).astype(np.uint8)
                 ).save(os.path.join(save_dir, f"Ep{episode_idx}_Iter0_F0_AdvRender.png"))
 
-            # resize + normalize → model input
-            adv_224 = F.interpolate(adv_diff, size=(model_input_size, model_input_size),
-                                     mode="bilinear", align_corners=False)
-            pv = torch.cat(
-                [(adv_224 - siglip_mean) / siglip_std,
-                 (adv_224 - dino_mean)   / dino_std], dim=1
-            )
+            sample_action_losses = []
+            sample_feat_losses   = []
 
-            with autocast(dtype=torch.bfloat16):
-                outputs = model(
-                    input_ids=ids,
-                    attention_mask=torch.ones_like(ids),
-                    pixel_values=pv.to(torch.bfloat16),
-                    output_hidden_states=True,
+            for adv_img in adv_samples:
+                adv_224 = F.interpolate(
+                    adv_img,
+                    size=(fdata["model_input_size"], fdata["model_input_size"]),
+                    mode="bilinear", align_corners=False,
+                )
+                pv = torch.cat(
+                    [(adv_224 - fdata["siglip_mean"]) / fdata["siglip_std"],
+                     (adv_224 - fdata["dino_mean"])   / fdata["dino_std"]], dim=1
                 )
 
-            loss_action  = get_attack_loss(outputs.logits, ids)
-            # 最大化特征偏移 = 最小化负 MSE
-            loss_feature = -F.mse_loss(outputs.hidden_states[-1], c_hid)
+                with autocast(dtype=torch.bfloat16):
+                    outputs = model(
+                        input_ids=fdata["clean_output_ids"],
+                        attention_mask=torch.ones_like(fdata["clean_output_ids"]),
+                        pixel_values=pv.to(torch.bfloat16),
+                        output_hidden_states=True,
+                    )
 
-            frame_loss = (
+                sample_action_losses.append(get_attack_loss(outputs.logits, fdata["clean_output_ids"]))
+                sample_feat_losses.append(-F.mse_loss(outputs.hidden_states[-1], fdata["clean_hidden"]))
+
+            loss_action  = torch.stack(sample_action_losses).mean()
+            loss_feature = torch.stack(sample_feat_losses).mean()
+
+            frame_loss = w_t * (
                 cfg.alpha_action  * loss_action +
                 cfg.alpha_feature * loss_feature
             ) / num_frames
@@ -635,15 +799,13 @@ def train_adversarial_texture(
             gnorm=f"{g_norm:.4f}",
         )
 
-    # ---- 保存产物 ---- #
     if cfg.save_attack_artifacts:
         torch.save(
             renderer.get_texture_param().detach().cpu(),
             os.path.join(save_dir, f"Ep{episode_idx}_Vertex_Noise.pt"),
         )
-        final_tex = renderer.get_baked_adv_texture()
         Image.fromarray(
-            (final_tex.squeeze(0).cpu().numpy() * 255).astype(np.uint8)
+            (renderer.get_baked_adv_texture().squeeze(0).cpu().numpy() * 255).astype(np.uint8)
         ).save(os.path.join(save_dir, f"Ep{episode_idx}_UV_Map.png"))
         np.save(
             os.path.join(save_dir, f"Ep{episode_idx}_loss_history.npy"),
@@ -655,45 +817,63 @@ def train_adversarial_texture(
 
 @dataclass
 class GenerateConfig:
-    model_family:         str            = "openvla"
+    model_family:          str            = "openvla"
     pretrained_checkpoint: Union[str, Path] = "/path/to/openvla/checkpoint"
-    load_in_8bit:         bool           = False
-    load_in_4bit:         bool           = False
-    center_crop:          bool           = True
-    object_name: str = "akita_black_bowl"
+    load_in_8bit:          bool           = False
+    load_in_4bit:          bool           = False
+    center_crop:           bool           = True
+
+    object_name:           str           = "akita_black_bowl"
     override_mesh_path:    Optional[str] = None
     override_texture_path: Optional[str] = None
     override_xml_path:     Optional[str] = None
-    task_suite_name:    str          = "libero_spatial"
-    task_id:            Optional[int] = None  # None = 全部任务
-    num_steps_wait:     int          = 10
-    num_trials_per_task: int         = 2
-    enable_attack:        bool          = False
-    attack_iters:         int           = 5000
-    attack_lr:            float         = 0.05
-    num_frames_to_attack: int           = 20
-    alpha_action:         float         = 1.0
-    alpha_feature:        float         = 10.0
-    save_attack_artifacts: bool         = True
-    load_texture_path:     Optional[str] = None
-    local_log_dir:         str          = "./experiments/logs"
 
-    use_wandb:     bool = False
-    wandb_project: str  = "openvla_attack"
-    wandb_entity:  str  = "user"
+    task_suite_name:     str           = "libero_spatial"
+    task_id:             Optional[int] = None
+    num_steps_wait:      int           = 10
+    num_trials_per_task: int           = 2
 
-    seed:       int            = 7
-    run_id_note: Optional[str] = None
-    unnorm_key:  Optional[str] = None
+    enable_attack:        bool           = False
+    attack_iters:         int            = 5000
+    attack_lr:            float          = 0.05
+    num_frames_to_attack: int            = 20
+    alpha_action:         float          = 1.0
+    alpha_feature:        float          = 10.0
+
+    latent_encoder_config: str   = "./taming-transformers/configs/vqgan_imagenet_f16_16384.yaml"
+    latent_encoder_ckpt:   str   = "./taming-transformers/checkpoints/vqgan_imagenet_f16_16384.ckpt"
+    tau:                   float = 1.0
+
+    use_eot:         bool  = False
+    eot_mode:        str   = "both"
+    eot_num_samples: int   = 4
+    eot_rot_std_deg: float = 5.0
+    eot_trans_std:   float = 0.02
+    eot_scale_min:   float = 0.9
+    eot_scale_max:   float = 1.1
+
+    save_attack_artifacts: bool           = True
+    load_texture_path:     Optional[str]  = None
+    local_log_dir:         str            = "./experiments/logs"
+
+    use_wandb:     bool           = False
+    wandb_project: str            = "openvla_attack"
+    wandb_entity:  str            = "user"
+
+    seed:        int            = 7
+    run_id_note: Optional[str]  = None
+    unnorm_key:  Optional[str]  = None
 
 
 @draccus.wrap()
 def eval_libero(cfg: GenerateConfig) -> None:
     set_seed_everywhere(cfg.seed)
+
+    if cfg.use_eot and cfg.eot_mode not in ("none", "2d", "3d", "both"):
+        raise ValueError(f"eot_mode must be one of: none / 2d / 3d / both, got '{cfg.eot_mode}'")
+
     if cfg.object_name not in OBJECTS:
-        raise ValueError(
-            f"未知物体 '{cfg.object_name}'，可选: {list(OBJECTS.keys())}"
-        )
+        raise ValueError(f"未知物体 '{cfg.object_name}'，可选: {list(OBJECTS.keys())}")
     obj_cfg = OBJECTS[cfg.object_name]
     mesh_path    = cfg.override_mesh_path    or obj_cfg["mesh"]
     texture_path = cfg.override_texture_path or obj_cfg["texture"]
@@ -716,7 +896,6 @@ def eval_libero(cfg: GenerateConfig) -> None:
             scale_xyz=scale_xyz,
         ).to(model.device)
 
-    # ---- 运行 ID / 目录 ---- #
     run_id = f"EVAL-{task_suite_name}-{DATE_TIME}"
     if cfg.run_id_note:
         run_id = f"{cfg.run_id_note}-{run_id}"
@@ -725,13 +904,12 @@ def eval_libero(cfg: GenerateConfig) -> None:
     if cfg.enable_attack and cfg.save_attack_artifacts:
         os.makedirs(artifact_dir, exist_ok=True)
 
-    log_file      = open(os.path.join(cfg.local_log_dir, run_id + ".txt"), "w")
-    original_xml  = Path(xml_path)
+    log_file     = open(os.path.join(cfg.local_log_dir, run_id + ".txt"), "w")
+    original_xml = Path(xml_path)
 
     if cfg.use_wandb:
         wandb.init(project=cfg.wandb_project, entity=cfg.wandb_entity, name=run_id)
 
-    # 全局纯净 XML 备份
     if not original_xml.exists():
         raise FileNotFoundError(f"XML asset not found at {original_xml}")
     global_clean_backup = original_xml.with_name(
@@ -745,7 +923,7 @@ def eval_libero(cfg: GenerateConfig) -> None:
     target_tasks   = ([cfg.task_id] if cfg.task_id is not None
                       else range(task_suite_obj.n_tasks))
 
-    total_episodes = 0
+    total_episodes  = 0
     total_successes = 0
 
     try:
@@ -755,8 +933,9 @@ def eval_libero(cfg: GenerateConfig) -> None:
             shutil.copy(global_clean_backup, original_xml)
             print(f"\n[INFO] Restored clean XML for Task {task_id}.")
 
-            task = task_suite_obj.get_task(task_id)
+            task        = task_suite_obj.get_task(task_id)
             init_states = task_suite_obj.get_task_init_states(task_id)
+
             if cfg.enable_attack and cfg.load_texture_path is None:
                 print(f"[INFO] Attack training for Task {task_id}...")
                 renderer.reset_texture()
@@ -773,6 +952,7 @@ def eval_libero(cfg: GenerateConfig) -> None:
                     search_keywords_list=search_kw,
                     num_iters=cfg.attack_iters,
                 )
+
                 with torch.no_grad():
                     baked_tex = renderer.get_baked_adv_texture()
                     trained_tex_path = os.path.join(
@@ -782,6 +962,7 @@ def eval_libero(cfg: GenerateConfig) -> None:
                         (baked_tex.squeeze(0).cpu().numpy() * 255).astype(np.uint8)
                     ).save(trained_tex_path)
                 print(f"[INFO] Task {task_id} texture saved → {trained_tex_path}")
+
                 tree = ET.parse(original_xml)
                 root = tree.getroot()
                 tex_name = f"tex-{cfg.object_name}"
@@ -796,9 +977,10 @@ def eval_libero(cfg: GenerateConfig) -> None:
                     if mat_elem.get("name") == mat_name:
                         mat_elem.set("texuniform", "false")
                 tree.write(original_xml)
-                print(f"[INFO] XML updated with adversarial texture for Task {task_id}.")
+                print(f"[INFO] XML updated for Task {task_id}.")
+
             for ep in tqdm.tqdm(range(cfg.num_trials_per_task),
-                                desc=f"Task {task_id} Episodes"):
+                                 desc=f"Task {task_id} Episodes"):
                 env, task_description = get_libero_env(
                     task, cfg.model_family, resolution=VIDEO_RES
                 )
