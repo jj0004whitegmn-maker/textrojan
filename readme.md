@@ -1,7 +1,6 @@
 <div align="center">
 
 <img src="https://img.shields.io/badge/arXiv-2604.01618-b31b1b?style=for-the-badge&logo=arxiv" alt="arXiv">
-<img src="https://img.shields.io/badge/ACM_MM-2026-blue?style=for-the-badge" alt="ACM MM 2026">
 <img src="https://img.shields.io/badge/Python-3.8+-green?style=for-the-badge&logo=python" alt="Python">
 <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License">
 
@@ -327,8 +326,7 @@ If you find Tex3D useful for your research, please cite:
   title     = {Tex3D: Objects as Attack Surfaces via Adversarial 3D Textures for Vision-Language-Action Models},
   author    = {Chen, Jiawei and Huang, Simin and Du, Jiawei and Chen, Shuaihang and Tian, Yu and Wei, Mingjie and Yu, Chao and Yin, Zhaoxia},
   journal   = {arXiv preprint arXiv:2604.01618},
-  year      = {2026},
-  note      = {ACM MM 2026}
+  year      = {2026}
 }
 ```
 
