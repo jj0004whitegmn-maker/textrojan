@@ -322,11 +322,14 @@ python experiments/robot/libero/attack_openvla.py \
 If you find Tex3D useful for your research, please cite:
 
 ```bibtex
-@article{chen2026tex3d,
-  title     = {Tex3D: Objects as Attack Surfaces via Adversarial 3D Textures for Vision-Language-Action Models},
-  author    = {Chen, Jiawei and Huang, Simin and Du, Jiawei and Chen, Shuaihang and Tian, Yu and Wei, Mingjie and Yu, Chao and Yin, Zhaoxia},
-  journal   = {arXiv preprint arXiv:2604.01618},
-  year      = {2026}
+@misc{chen2026tex3dobjectsattacksurfaces,
+      title={Tex3D: Objects as Attack Surfaces via Adversarial 3D Textures for Vision-Language-Action Models}, 
+      author={Jiawei Chen and Simin Huang and Jiawei Du and Shuaihang Chen and Yu Tian and Mingjie Wei and Chao Yu and Zhaoxia Yin},
+      year={2026},
+      eprint={2604.01618},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2604.01618}, 
 }
 ```
 
